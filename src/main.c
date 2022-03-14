@@ -58,6 +58,8 @@ static K_SEM_DEFINE(ble_init_ok, 0, 1);
 static struct bt_conn *current_conn;
 static struct bt_conn *auth_conn;
 
+static struct bt_le_ext_adv *adv;
+
 static const struct device *uart;
 static struct k_work_delayable uart_work;
 
@@ -72,10 +74,6 @@ static K_FIFO_DEFINE(fifo_uart_rx_data);
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
-};
-
-static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
 };
 
@@ -523,6 +521,34 @@ static void num_comp_reply(bool accept)
 	auth_conn = NULL;
 }
 
+static int create_advertising_coded(void)
+{
+	int err;
+	struct bt_le_adv_param param =
+		BT_LE_ADV_PARAM_INIT(BT_LE_ADV_OPT_CONNECTABLE |
+				     BT_LE_ADV_OPT_EXT_ADV |
+				     BT_LE_ADV_OPT_CODED,
+				     BT_GAP_ADV_FAST_INT_MIN_2,
+				     BT_GAP_ADV_FAST_INT_MAX_2,
+				     NULL);
+
+	err = bt_le_ext_adv_create(&param, NULL, &adv);
+	if (err) {
+		printk("Failed to create advertiser set (%d)\n", err);
+		return err;
+	}
+
+	printk("Created adv: %p\n", adv);
+
+	err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err) {
+		printk("Failed to set advertising data (%d)\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
 void button_changed(uint32_t button_state, uint32_t has_changed)
 {
 	uint32_t buttons = button_state & has_changed;
@@ -587,16 +613,17 @@ void main(void)
 		settings_load();
 	}
 
+	create_advertising_coded();
+
 	err = bt_nus_init(&nus_cb);
 	if (err) {
 		LOG_ERR("Failed to initialize UART service (err: %d)", err);
 		return;
 	}
 
-	err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd,
-			      ARRAY_SIZE(sd));
+	err = bt_le_ext_adv_start(adv, NULL);
 	if (err) {
-		LOG_ERR("Advertising failed to start (err %d)", err);
+		printk("Failed to start advertising set (%d)\n", err);
 		return;
 	}
 
